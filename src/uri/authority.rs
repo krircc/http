@@ -1,15 +1,12 @@
-// Deprecated in 1.26, needed until our minimum version is >=1.23.
-#[allow(unused, deprecated)]
-use std::ascii::AsciiExt;
-use std::{cmp, fmt, str};
+use std::convert::TryFrom;
 use std::hash::{Hash, Hasher};
 use std::str::FromStr;
+use std::{cmp, fmt, str};
 
 use bytes::Bytes;
 
-use byte_str::ByteStr;
-use convert::HttpTryFrom;
-use super::{ErrorKind, InvalidUri, InvalidUriBytes, URI_CHARS, Port};
+use super::{ErrorKind, InvalidUri, InvalidUriBytes, Port, URI_CHARS};
+use crate::byte_str::ByteStr;
 
 /// Represents the authority component of a URI.
 #[derive(Clone)]
@@ -19,13 +16,14 @@ pub struct Authority {
 
 impl Authority {
     pub(super) fn empty() -> Self {
-        Authority { data: ByteStr::new() }
+        Authority {
+            data: ByteStr::new(),
+        }
     }
 
     /// Attempt to convert an `Authority` from `Bytes`.
     ///
-    /// This function will be replaced by a `TryFrom` implementation once the
-    /// trait lands in stable.
+    /// This function has been replaced by `TryFrom` implementation.
     ///
     /// # Examples
     ///
@@ -44,15 +42,7 @@ impl Authority {
     /// # }
     /// ```
     pub fn from_shared(s: Bytes) -> Result<Self, InvalidUriBytes> {
-        let authority_end = Authority::parse_non_empty(&s[..]).map_err(InvalidUriBytes)?;
-
-        if authority_end != s.len() {
-            return Err(ErrorKind::InvalidUriChar.into());
-        }
-
-        Ok(Authority {
-            data: unsafe { ByteStr::from_utf8_unchecked(s) },
-        })
+        TryFrom::try_from(s)
     }
 
     /// Attempt to convert an `Authority` from a static string.
@@ -75,7 +65,8 @@ impl Authority {
     pub fn from_static(src: &'static str) -> Self {
         let s = src.as_bytes();
         let b = Bytes::from_static(s);
-        let authority_end = Authority::parse_non_empty(&b[..]).expect("static str is not valid authority");
+        let authority_end =
+            Authority::parse_non_empty(&b[..]).expect("static str is not valid authority");
 
         if authority_end != b.len() {
             panic!("static str is not valid authority");
@@ -205,12 +196,6 @@ impl Authority {
         host(self.as_str())
     }
 
-    #[deprecated(since="0.1.14", note="use `port_part` or `port_u16` instead")]
-    #[doc(hidden)]
-    pub fn port(&self) -> Option<u16> {
-        self.port_u16()
-    }
-
     /// Get the port part of this `Authority`.
     ///
     /// The port subcomponent of authority is designated by an optional port
@@ -233,7 +218,7 @@ impl Authority {
     /// # use http::uri::Authority;
     /// let authority: Authority = "example.org:80".parse().unwrap();
     ///
-    /// let port = authority.port_part().unwrap();
+    /// let port = authority.port().unwrap();
     /// assert_eq!(port.as_u16(), 80);
     /// assert_eq!(port.as_str(), "80");
     /// ```
@@ -244,9 +229,9 @@ impl Authority {
     /// # use http::uri::Authority;
     /// let authority: Authority = "example.org".parse().unwrap();
     ///
-    /// assert!(authority.port_part().is_none());
+    /// assert!(authority.port().is_none());
     /// ```
-    pub fn port_part(&self) -> Option<Port<&str>> {
+    pub fn port(&self) -> Option<Port<&str>> {
         let bytes = self.as_str();
         bytes
             .rfind(":")
@@ -264,7 +249,7 @@ impl Authority {
     /// assert_eq!(authority.port_u16(), Some(80));
     /// ```
     pub fn port_u16(&self) -> Option<u16> {
-        self.port_part().and_then(|p| Some(p.as_u16()))
+        self.port().and_then(|p| Some(p.as_u16()))
     }
 
     /// Return a str representation of the authority
@@ -277,6 +262,40 @@ impl Authority {
     #[inline]
     pub fn into_bytes(self) -> Bytes {
         self.into()
+    }
+}
+
+impl TryFrom<Bytes> for Authority {
+    type Error = InvalidUriBytes;
+    /// Attempt to convert an `Authority` from `Bytes`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate http;
+    /// # use http::uri::*;
+    /// extern crate bytes;
+    ///
+    /// use std::convert::TryFrom;
+    /// use bytes::Bytes;
+    ///
+    /// # pub fn main() {
+    /// let bytes = Bytes::from("example.com");
+    /// let authority = Authority::try_from(bytes).unwrap();
+    ///
+    /// assert_eq!(authority.host(), "example.com");
+    /// # }
+    /// ```
+    fn try_from(s: Bytes) -> Result<Self, Self::Error> {
+        let authority_end = Authority::parse_non_empty(&s[..]).map_err(InvalidUriBytes)?;
+
+        if authority_end != s.len() {
+            return Err(ErrorKind::InvalidUriChar.into());
+        }
+
+        Ok(Authority {
+            data: unsafe { ByteStr::from_utf8_unchecked(s) },
+        })
     }
 }
 
@@ -429,7 +448,10 @@ impl PartialOrd<Authority> for String {
 /// assert_eq!(a, b);
 /// ```
 impl Hash for Authority {
-    fn hash<H>(&self, state: &mut H) where H: Hasher {
+    fn hash<H>(&self, state: &mut H)
+    where
+        H: Hasher,
+    {
         self.data.len().hash(state);
         for &b in self.data.as_bytes() {
             state.write_u8(b.to_ascii_lowercase());
@@ -437,15 +459,7 @@ impl Hash for Authority {
     }
 }
 
-impl HttpTryFrom<Bytes> for Authority {
-    type Error = InvalidUriBytes;
-    #[inline]
-    fn try_from(bytes: Bytes) -> Result<Self, Self::Error> {
-        Authority::from_shared(bytes)
-    }
-}
-
-impl<'a> HttpTryFrom<&'a [u8]> for Authority {
+impl<'a> TryFrom<&'a [u8]> for Authority {
     type Error = InvalidUri;
     #[inline]
     fn try_from(s: &'a [u8]) -> Result<Self, Self::Error> {
@@ -457,16 +471,18 @@ impl<'a> HttpTryFrom<&'a [u8]> for Authority {
         }
 
         Ok(Authority {
-            data: unsafe { ByteStr::from_utf8_unchecked(s.into()) },
+            data: unsafe {
+                ByteStr::from_utf8_unchecked(Bytes::copy_from_slice(s))
+            },
         })
     }
 }
 
-impl<'a> HttpTryFrom<&'a str> for Authority {
+impl<'a> TryFrom<&'a str> for Authority {
     type Error = InvalidUri;
     #[inline]
     fn try_from(s: &'a str) -> Result<Self, Self::Error> {
-        HttpTryFrom::try_from(s.as_bytes())
+        TryFrom::try_from(s.as_bytes())
     }
 }
 
@@ -474,7 +490,7 @@ impl FromStr for Authority {
     type Err = InvalidUri;
 
     fn from_str(s: &str) -> Result<Self, InvalidUri> {
-        HttpTryFrom::try_from(s)
+        TryFrom::try_from(s)
     }
 }
 
@@ -486,29 +502,32 @@ impl From<Authority> for Bytes {
 }
 
 impl fmt::Debug for Authority {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
 }
 
 impl fmt::Display for Authority {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
 }
 
 fn host(auth: &str) -> &str {
-    let host_port = auth.rsplitn(2, '@')
+    let host_port = auth
+        .rsplitn(2, '@')
         .next()
         .expect("split always has at least 1 item");
 
     if host_port.as_bytes()[0] == b'[' {
-        let i = host_port.find(']')
+        let i = host_port
+            .find(']')
             .expect("parsing should validate brackets");
         // ..= ranges aren't available in 1.20, our minimum Rust version...
-        &host_port[0 .. i + 1]
+        &host_port[0..i + 1]
     } else {
-        host_port.split(':')
+        host_port
+            .split(':')
             .next()
             .expect("split always has at least 1 item")
     }

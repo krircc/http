@@ -1,15 +1,12 @@
-// Deprecated in 1.26, needed until our minimum version is >=1.23.
-#[allow(unused, deprecated)]
-use std::ascii::AsciiExt;
+use std::convert::TryFrom;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::str::FromStr;
 
 use bytes::Bytes;
 
-use byte_str::ByteStr;
-use convert::HttpTryFrom;
 use super::{ErrorKind, InvalidUri, InvalidUriBytes};
+use crate::byte_str::ByteStr;
 
 /// Represents the scheme component of a URI
 #[derive(Clone)]
@@ -43,8 +40,7 @@ impl Scheme {
 
     /// Attempt to convert a `Scheme` from `Bytes`
     ///
-    /// This function will be replaced by a `TryFrom` implementation once the
-    /// trait lands in stable.
+    /// This function has been replaced by `TryFrom` implementation
     ///
     /// # Examples
     ///
@@ -63,16 +59,7 @@ impl Scheme {
     /// # }
     /// ```
     pub fn from_shared(s: Bytes) -> Result<Self, InvalidUriBytes> {
-        use self::Scheme2::*;
-
-        match Scheme2::parse_exact(&s[..]).map_err(InvalidUriBytes)? {
-            None => Err(ErrorKind::InvalidScheme.into()),
-            Standard(p) => Ok(Standard(p).into()),
-            Other(_) => {
-                let b = unsafe { ByteStr::from_utf8_unchecked(s) };
-                Ok(Other(Box::new(b)).into())
-            }
-        }
+        TryFrom::try_from(s)
     }
 
     pub(super) fn empty() -> Self {
@@ -92,8 +79,8 @@ impl Scheme {
     /// ```
     #[inline]
     pub fn as_str(&self) -> &str {
-        use self::Scheme2::*;
         use self::Protocol::*;
+        use self::Scheme2::*;
 
         match self.inner {
             Standard(Http) => "http",
@@ -110,15 +97,43 @@ impl Scheme {
     }
 }
 
-impl HttpTryFrom<Bytes> for Scheme {
+impl TryFrom<Bytes> for Scheme {
     type Error = InvalidUriBytes;
-    #[inline]
-    fn try_from(bytes: Bytes) -> Result<Self, Self::Error> {
-        Scheme::from_shared(bytes)
+
+    /// Attempt to convert a `Scheme` from `Bytes`
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate http;
+    /// # use http::uri::*;
+    /// extern crate bytes;
+    ///
+    /// use std::convert::TryFrom;
+    /// use bytes::Bytes;
+    ///
+    /// # pub fn main() {
+    /// let bytes = Bytes::from("http");
+    /// let scheme = Scheme::try_from(bytes).unwrap();
+    ///
+    /// assert_eq!(scheme.as_str(), "http");
+    /// # }
+    /// ```
+    fn try_from(s: Bytes) -> Result<Self, Self::Error> {
+        use self::Scheme2::*;
+
+        match Scheme2::parse_exact(&s[..]).map_err(InvalidUriBytes)? {
+            None => Err(ErrorKind::InvalidScheme.into()),
+            Standard(p) => Ok(Standard(p).into()),
+            Other(_) => {
+                let b = unsafe { ByteStr::from_utf8_unchecked(s) };
+                Ok(Other(Box::new(b)).into())
+            }
+        }
     }
 }
 
-impl<'a> HttpTryFrom<&'a [u8]> for Scheme {
+impl<'a> TryFrom<&'a [u8]> for Scheme {
     type Error = InvalidUri;
     #[inline]
     fn try_from(s: &'a [u8]) -> Result<Self, Self::Error> {
@@ -130,18 +145,18 @@ impl<'a> HttpTryFrom<&'a [u8]> for Scheme {
             Other(_) => {
                 // Unsafe: parse_exact already checks for a strict subset of UTF-8
                 Ok(Other(Box::new(unsafe {
-                    ByteStr::from_utf8_unchecked(s.into())
+                    ByteStr::from_utf8_unchecked(Bytes::copy_from_slice(s))
                 })).into())
             }
         }
     }
 }
 
-impl<'a> HttpTryFrom<&'a str> for Scheme {
+impl<'a> TryFrom<&'a str> for Scheme {
     type Error = InvalidUri;
     #[inline]
     fn try_from(s: &'a str) -> Result<Self, Self::Error> {
-        HttpTryFrom::try_from(s.as_bytes())
+        TryFrom::try_from(s.as_bytes())
     }
 }
 
@@ -149,15 +164,15 @@ impl FromStr for Scheme {
     type Err = InvalidUri;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        HttpTryFrom::try_from(s)
+        TryFrom::try_from(s)
     }
 }
 
 impl From<Scheme> for Bytes {
     #[inline]
     fn from(src: Scheme) -> Self {
-        use self::Scheme2::*;
         use self::Protocol::*;
+        use self::Scheme2::*;
 
         match src.inner {
             None => Bytes::new(),
@@ -169,13 +184,13 @@ impl From<Scheme> for Bytes {
 }
 
 impl fmt::Debug for Scheme {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(self.as_str(), f)
     }
 }
 
 impl fmt::Display for Scheme {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
 }
@@ -228,7 +243,10 @@ impl PartialEq<Scheme> for str {
 
 /// Case-insensitive hashing
 impl Hash for Scheme {
-    fn hash<H>(&self, state: &mut H) where H: Hasher {
+    fn hash<H>(&self, state: &mut H)
+    where
+        H: Hasher,
+    {
         match self.inner {
             Scheme2::None => (),
             Scheme2::Standard(Protocol::Http) => state.write_u8(1),
@@ -336,10 +354,6 @@ impl Scheme2<usize> {
             for i in 0..s.len() {
                 let b = s[i];
 
-                if i == MAX_SCHEME_LEN {
-                    return Err(ErrorKind::SchemeTooLong.into());
-                }
-
                 match SCHEME_CHARS[b as usize] {
                     b':' => {
                         // Not enough data remaining
@@ -348,8 +362,12 @@ impl Scheme2<usize> {
                         }
 
                         // Not a scheme
-                        if &s[i+1..i+3] != b"//" {
+                        if &s[i + 1..i + 3] != b"//" {
                             break;
+                        }
+
+                        if i > MAX_SCHEME_LEN {
+                            return Err(ErrorKind::SchemeTooLong.into());
                         }
 
                         // Return scheme

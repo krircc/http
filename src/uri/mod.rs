@@ -17,31 +17,28 @@
 //! assert_eq!(uri.host(), None);
 //!
 //! let uri = "https://www.rust-lang.org/install.html".parse::<Uri>().unwrap();
-//! assert_eq!(uri.scheme_part().map(|s| s.as_str()), Some("https"));
+//! assert_eq!(uri.scheme_str(), Some("https"));
 //! assert_eq!(uri.host(), Some("www.rust-lang.org"));
 //! assert_eq!(uri.path(), "/install.html");
 //! ```
 
-use HttpTryFrom;
-use byte_str::ByteStr;
+use crate::byte_str::ByteStr;
+use std::convert::TryFrom;
 
 use bytes::Bytes;
 
-use std::{fmt, u8, u16};
-// Deprecated in 1.26, needed until our minimum version is >=1.23.
-#[allow(unused, deprecated)]
-use std::ascii::AsciiExt;
+use std::error::Error;
 use std::hash::{Hash, Hasher};
 use std::str::{self, FromStr};
-use std::error::Error;
+use std::{fmt, u16, u8};
 
 use self::scheme::Scheme2;
 
 pub use self::authority::Authority;
 pub use self::builder::Builder;
 pub use self::path::PathAndQuery;
-pub use self::scheme::Scheme;
 pub use self::port::Port;
+pub use self::scheme::Scheme;
 
 mod authority;
 mod builder;
@@ -91,7 +88,7 @@ mod tests;
 /// assert_eq!(uri.host(), None);
 ///
 /// let uri = "https://www.rust-lang.org/install.html".parse::<Uri>().unwrap();
-/// assert_eq!(uri.scheme_part().map(|s| s.as_str()), Some("https"));
+/// assert_eq!(uri.scheme_str(), Some("https"));
 /// assert_eq!(uri.host(), Some("www.rust-lang.org"));
 /// assert_eq!(uri.path(), "/install.html");
 /// ```
@@ -220,7 +217,9 @@ impl Uri {
 
         let scheme = match src.scheme {
             Some(scheme) => scheme,
-            None => Scheme { inner: Scheme2::None },
+            None => Scheme {
+                inner: Scheme2::None,
+            },
         };
 
         let authority = match src.authority {
@@ -242,8 +241,7 @@ impl Uri {
 
     /// Attempt to convert a `Uri` from `Bytes`
     ///
-    /// This function will be replaced by a `TryFrom` implementation once the
-    /// trait lands in stable.
+    /// This function has been replaced by `TryFrom` implementation.
     ///
     /// # Examples
     ///
@@ -263,55 +261,7 @@ impl Uri {
     /// # }
     /// ```
     pub fn from_shared(s: Bytes) -> Result<Uri, InvalidUriBytes> {
-        use self::ErrorKind::*;
-
-        if s.len() > MAX_LEN {
-            return Err(TooLong.into());
-        }
-
-        match s.len() {
-            0 => {
-                return Err(Empty.into());
-            }
-            1 => {
-                match s[0] {
-                    b'/' => {
-                        return Ok(Uri {
-                            scheme: Scheme::empty(),
-                            authority: Authority::empty(),
-                            path_and_query: PathAndQuery::slash(),
-                        });
-                    }
-                    b'*' => {
-                        return Ok(Uri {
-                            scheme: Scheme::empty(),
-                            authority: Authority::empty(),
-                            path_and_query: PathAndQuery::star(),
-                        });
-                    }
-                    _ => {
-                        let authority = Authority::from_shared(s)?;
-
-                        return Ok(Uri {
-                            scheme: Scheme::empty(),
-                            authority: authority,
-                            path_and_query: PathAndQuery::empty(),
-                        });
-                    }
-                }
-            }
-            _ => {}
-        }
-
-        if s[0] == b'/' {
-            return Ok(Uri {
-                scheme: Scheme::empty(),
-                authority: Authority::empty(),
-                path_and_query: PathAndQuery::from_shared(s)?,
-            });
-        }
-
-        parse_full(s)
+        TryFrom::try_from(s)
     }
 
     /// Convert a `Uri` from a static string.
@@ -441,7 +391,7 @@ impl Uri {
     ///
     /// let uri: Uri = "http://example.org/hello/world".parse().unwrap();
     ///
-    /// assert_eq!(uri.scheme_part(), Some(&Scheme::HTTP));
+    /// assert_eq!(uri.scheme(), Some(&Scheme::HTTP));
     /// ```
     ///
     ///
@@ -451,22 +401,15 @@ impl Uri {
     /// # use http::Uri;
     /// let uri: Uri = "/hello/world".parse().unwrap();
     ///
-    /// assert!(uri.scheme_part().is_none());
+    /// assert!(uri.scheme().is_none());
     /// ```
     #[inline]
-    pub fn scheme_part(&self) -> Option<&Scheme> {
+    pub fn scheme(&self) -> Option<&Scheme> {
         if self.scheme.inner.is_none() {
             None
         } else {
             Some(&self.scheme)
         }
-    }
-
-    #[deprecated(since = "0.1.2", note = "use scheme_part or scheme_str instead")]
-    #[doc(hidden)]
-    #[inline]
-    pub fn scheme(&self) -> Option<&str> {
-        self.scheme_str()
     }
 
     /// Get the scheme of this `Uri` as a `&str`.
@@ -515,7 +458,7 @@ impl Uri {
     /// # use http::Uri;
     /// let uri: Uri = "http://example.org:80/hello/world".parse().unwrap();
     ///
-    /// assert_eq!(uri.authority_part().map(|a| a.as_str()), Some("example.org:80"));
+    /// assert_eq!(uri.authority().map(|a| a.as_str()), Some("example.org:80"));
     /// ```
     ///
     ///
@@ -525,25 +468,14 @@ impl Uri {
     /// # use http::Uri;
     /// let uri: Uri = "/hello/world".parse().unwrap();
     ///
-    /// assert!(uri.authority_part().is_none());
+    /// assert!(uri.authority().is_none());
     /// ```
     #[inline]
-    pub fn authority_part(&self) -> Option<&Authority> {
+    pub fn authority(&self) -> Option<&Authority> {
         if self.authority.data.is_empty() {
             None
         } else {
             Some(&self.authority)
-        }
-    }
-
-    #[deprecated(since = "0.1.1", note = "use authority_part instead")]
-    #[doc(hidden)]
-    #[inline]
-    pub fn authority(&self) -> Option<&str> {
-        if self.authority.data.is_empty() {
-            None
-        } else {
-            Some(self.authority.as_str())
         }
     }
 
@@ -582,13 +514,7 @@ impl Uri {
     /// ```
     #[inline]
     pub fn host(&self) -> Option<&str> {
-        self.authority_part().map(|a| a.host())
-    }
-
-    #[deprecated(since="0.1.14", note="use `port_part` or `port_u16` instead")]
-    #[doc(hidden)]
-    pub fn port(&self) -> Option<u16> {
-        self.port_u16()
+        self.authority().map(|a| a.host())
     }
 
     /// Get the port part of this `Uri`.
@@ -613,7 +539,7 @@ impl Uri {
     /// # use http::Uri;
     /// let uri: Uri = "http://example.org:80/hello/world".parse().unwrap();
     ///
-    /// let port = uri.port_part().unwrap();
+    /// let port = uri.port().unwrap();
     /// assert_eq!(port.as_u16(), 80);
     /// ```
     ///
@@ -623,7 +549,7 @@ impl Uri {
     /// # use http::Uri;
     /// let uri: Uri = "http://example.org/hello/world".parse().unwrap();
     ///
-    /// assert!(uri.port_part().is_none());
+    /// assert!(uri.port().is_none());
     /// ```
     ///
     /// Relative URI
@@ -632,11 +558,10 @@ impl Uri {
     /// # use http::Uri;
     /// let uri: Uri = "/hello/world".parse().unwrap();
     ///
-    /// assert!(uri.port_part().is_none());
+    /// assert!(uri.port().is_none());
     /// ```
-    pub fn port_part(&self) -> Option<Port<&str>> {
-        self.authority_part()
-            .and_then(|a| a.port_part())
+    pub fn port(&self) -> Option<Port<&str>> {
+        self.authority().and_then(|a| a.port())
     }
 
     /// Get the port of this `Uri` as a `u16`.
@@ -651,7 +576,7 @@ impl Uri {
     /// assert_eq!(uri.port_u16(), Some(80));
     /// ```
     pub fn port_u16(&self) -> Option<u16> {
-        self.port_part().and_then(|p| Some(p.as_u16()))
+        self.port().and_then(|p| Some(p.as_u16()))
     }
 
     /// Get the query string of this `Uri`, starting after the `?`.
@@ -707,7 +632,81 @@ impl Uri {
     }
 }
 
-impl<'a> HttpTryFrom<&'a str> for Uri {
+impl TryFrom<Bytes> for Uri {
+    type Error = InvalidUriBytes;
+
+    /// Attempt to convert a `Uri` from `Bytes`
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # extern crate http;
+    /// # use http::uri::*;
+    /// extern crate bytes;
+    ///
+    /// use std::convert::TryFrom;
+    /// use bytes::Bytes;
+    ///
+    /// # pub fn main() {
+    /// let bytes = Bytes::from("http://example.com/foo");
+    /// let uri = Uri::try_from(bytes).unwrap();
+    ///
+    /// assert_eq!(uri.host().unwrap(), "example.com");
+    /// assert_eq!(uri.path(), "/foo");
+    /// # }
+    /// ```
+    fn try_from(s: Bytes) -> Result<Uri, Self::Error> {
+        use self::ErrorKind::*;
+
+        if s.len() > MAX_LEN {
+            return Err(TooLong.into());
+        }
+
+        match s.len() {
+            0 => {
+                return Err(Empty.into());
+            }
+            1 => match s[0] {
+                b'/' => {
+                    return Ok(Uri {
+                        scheme: Scheme::empty(),
+                        authority: Authority::empty(),
+                        path_and_query: PathAndQuery::slash(),
+                    });
+                }
+                b'*' => {
+                    return Ok(Uri {
+                        scheme: Scheme::empty(),
+                        authority: Authority::empty(),
+                        path_and_query: PathAndQuery::star(),
+                    });
+                }
+                _ => {
+                    let authority = Authority::from_shared(s)?;
+
+                    return Ok(Uri {
+                        scheme: Scheme::empty(),
+                        authority: authority,
+                        path_and_query: PathAndQuery::empty(),
+                    });
+                }
+            },
+            _ => {}
+        }
+
+        if s[0] == b'/' {
+            return Ok(Uri {
+                scheme: Scheme::empty(),
+                authority: Authority::empty(),
+                path_and_query: PathAndQuery::from_shared(s)?,
+            });
+        }
+
+        parse_full(s)
+    }
+}
+
+impl<'a> TryFrom<&'a str> for Uri {
     type Error = InvalidUri;
 
     #[inline]
@@ -716,7 +715,7 @@ impl<'a> HttpTryFrom<&'a str> for Uri {
     }
 }
 
-impl<'a> HttpTryFrom<&'a String> for Uri {
+impl<'a> TryFrom<&'a String> for Uri {
     type Error = InvalidUri;
 
     #[inline]
@@ -725,7 +724,7 @@ impl<'a> HttpTryFrom<&'a String> for Uri {
     }
 }
 
-impl HttpTryFrom<String> for Uri {
+impl TryFrom<String> for Uri {
     type Error = InvalidUriBytes;
 
     #[inline]
@@ -734,16 +733,7 @@ impl HttpTryFrom<String> for Uri {
     }
 }
 
-impl HttpTryFrom<Bytes> for Uri {
-    type Error = InvalidUriBytes;
-
-    #[inline]
-    fn try_from(t: Bytes) -> Result<Self, Self::Error> {
-        Uri::from_shared(t)
-    }
-}
-
-impl HttpTryFrom<Parts> for Uri {
+impl TryFrom<Parts> for Uri {
     type Error = InvalidUriParts;
 
     #[inline]
@@ -752,8 +742,8 @@ impl HttpTryFrom<Parts> for Uri {
     }
 }
 
-impl<'a> HttpTryFrom<&'a Uri> for Uri {
-    type Error = ::Error;
+impl<'a> TryFrom<&'a Uri> for Uri {
+    type Error = crate::Error;
 
     #[inline]
     fn try_from(src: &'a Uri) -> Result<Self, Self::Error> {
@@ -776,7 +766,7 @@ impl<'a> HttpTryFrom<&'a Uri> for Uri {
 ///
 /// assert_eq!(uri.path(), "/foo");
 ///
-/// assert!(uri.scheme_part().is_none());
+/// assert!(uri.scheme().is_none());
 /// assert!(uri.authority().is_none());
 /// ```
 ///
@@ -791,7 +781,7 @@ impl<'a> HttpTryFrom<&'a Uri> for Uri {
 ///
 /// let uri = Uri::from_parts(parts).unwrap();
 ///
-/// assert_eq!(uri.scheme_part().unwrap().as_str(), "http");
+/// assert_eq!(uri.scheme().unwrap().as_str(), "http");
 /// assert_eq!(uri.authority().unwrap(), "foo.com");
 /// assert_eq!(uri.path(), "/foo");
 /// ```
@@ -888,17 +878,17 @@ impl FromStr for Uri {
 
     #[inline]
     fn from_str(s: &str) -> Result<Uri, InvalidUri> {
-        Uri::from_shared(s.into()).map_err(|e| e.0)
+        Uri::from_shared(Bytes::copy_from_slice(s.as_bytes())).map_err(|e| e.0)
     }
 }
 
 impl PartialEq for Uri {
     fn eq(&self, other: &Uri) -> bool {
-        if self.scheme_part() != other.scheme_part() {
+        if self.scheme() != other.scheme() {
             return false;
         }
 
-        if self.authority_part() != other.authority_part() {
+        if self.authority() != other.authority() {
             return false;
         }
 
@@ -919,7 +909,7 @@ impl PartialEq<str> for Uri {
         let mut other = other.as_bytes();
         let mut absolute = false;
 
-        if let Some(scheme) = self.scheme_part() {
+        if let Some(scheme) = self.scheme() {
             let scheme = scheme.as_str().as_bytes();
             absolute = true;
 
@@ -940,7 +930,7 @@ impl PartialEq<str> for Uri {
             other = &other[3..];
         }
 
-        if let Some(auth) = self.authority_part() {
+        if let Some(auth) = self.authority() {
             let len = auth.data.len();
             absolute = true;
 
@@ -1000,7 +990,7 @@ impl PartialEq<Uri> for str {
 }
 
 impl<'a> PartialEq<&'a str> for Uri {
-    fn eq(&self, other: & &'a str) -> bool {
+    fn eq(&self, other: &&'a str) -> bool {
         self == *other
     }
 }
@@ -1026,12 +1016,12 @@ impl Default for Uri {
 }
 
 impl fmt::Display for Uri {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if let Some(scheme) = self.scheme_part() {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(scheme) = self.scheme() {
             write!(f, "{}://", scheme)?;
         }
 
-        if let Some(authority) = self.authority_part() {
+        if let Some(authority) = self.authority() {
             write!(f, "{}", authority)?;
         }
 
@@ -1046,7 +1036,7 @@ impl fmt::Display for Uri {
 }
 
 impl fmt::Debug for Uri {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f)
     }
 }
@@ -1070,7 +1060,7 @@ impl From<ErrorKind> for InvalidUriParts {
 }
 
 impl fmt::Display for InvalidUri {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.description().fmt(f)
     }
 }
@@ -1094,13 +1084,13 @@ impl Error for InvalidUri {
 }
 
 impl fmt::Display for InvalidUriBytes {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
 }
 
 impl fmt::Display for InvalidUriParts {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
 }
@@ -1118,13 +1108,16 @@ impl Error for InvalidUriParts {
 }
 
 impl Hash for Uri {
-    fn hash<H>(&self, state: &mut H) where H: Hasher {
+    fn hash<H>(&self, state: &mut H)
+    where
+        H: Hasher,
+    {
         if !self.scheme.inner.is_none() {
             self.scheme.hash(state);
             state.write_u8(0xff);
         }
 
-        if let Some(auth) = self.authority_part() {
+        if let Some(auth) = self.authority() {
             auth.hash(state);
         }
 

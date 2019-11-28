@@ -1,11 +1,11 @@
-use std::{cmp, fmt, str};
+use std::convert::TryFrom;
 use std::str::FromStr;
+use std::{cmp, fmt, str};
 
 use bytes::Bytes;
 
-use byte_str::ByteStr;
-use convert::HttpTryFrom;
 use super::{ErrorKind, InvalidUri, InvalidUriBytes};
+use crate::byte_str::ByteStr;
 
 /// Represents the path component of a URI
 #[derive(Clone)]
@@ -63,16 +63,16 @@ impl PathAndQuery {
                     b'#' => {
                         fragment = Some(i);
                         break;
-                    },
+                    }
 
                     // This is the range of bytes that don't need to be
                     // percent-encoded in the path. If it should have been
                     // percent-encoded, then error.
                     0x21 |
-                    0x24...0x3B |
+                    0x24..=0x3B |
                     0x3D |
-                    0x40...0x5F |
-                    0x61...0x7A |
+                    0x40..=0x5F |
+                    0x61..=0x7A |
                     0x7C |
                     0x7E => {},
 
@@ -94,14 +94,14 @@ impl PathAndQuery {
                         //
                         // Allowed: 0x21 / 0x24 - 0x3B / 0x3D / 0x3F - 0x7E
                         0x21 |
-                        0x24...0x3B |
+                        0x24..=0x3B |
                         0x3D |
-                        0x3F...0x7E => {},
+                        0x3F..=0x7E => {},
 
                         b'#' => {
                             fragment = Some(i);
                             break;
-                        },
+                        }
 
                         _ => return Err(ErrorKind::InvalidUriChar.into()),
                     }
@@ -141,8 +141,7 @@ impl PathAndQuery {
     pub fn from_static(src: &'static str) -> Self {
         let src = Bytes::from_static(src.as_bytes());
 
-        PathAndQuery::from_shared(src)
-            .unwrap()
+        PathAndQuery::from_shared(src).unwrap()
     }
 
     pub(super) fn empty() -> Self {
@@ -284,7 +283,7 @@ impl PathAndQuery {
     }
 }
 
-impl HttpTryFrom<Bytes> for PathAndQuery {
+impl TryFrom<Bytes> for PathAndQuery {
     type Error = InvalidUriBytes;
     #[inline]
     fn try_from(bytes: Bytes) -> Result<Self, Self::Error> {
@@ -292,19 +291,19 @@ impl HttpTryFrom<Bytes> for PathAndQuery {
     }
 }
 
-impl<'a> HttpTryFrom<&'a [u8]> for PathAndQuery {
+impl<'a> TryFrom<&'a [u8]> for PathAndQuery {
     type Error = InvalidUri;
     #[inline]
     fn try_from(s: &'a [u8]) -> Result<Self, Self::Error> {
-        PathAndQuery::from_shared(s.into()).map_err(|e| e.0)
+        PathAndQuery::from_shared(Bytes::copy_from_slice(s)).map_err(|e| e.0)
     }
 }
 
-impl<'a> HttpTryFrom<&'a str> for PathAndQuery {
+impl<'a> TryFrom<&'a str> for PathAndQuery {
     type Error = InvalidUri;
     #[inline]
     fn try_from(s: &'a str) -> Result<Self, Self::Error> {
-        HttpTryFrom::try_from(s.as_bytes())
+        TryFrom::try_from(s.as_bytes())
     }
 }
 
@@ -312,7 +311,7 @@ impl FromStr for PathAndQuery {
     type Err = InvalidUri;
     #[inline]
     fn from_str(s: &str) -> Result<Self, InvalidUri> {
-        HttpTryFrom::try_from(s)
+        TryFrom::try_from(s)
     }
 }
 
@@ -323,13 +322,13 @@ impl From<PathAndQuery> for Bytes {
 }
 
 impl fmt::Debug for PathAndQuery {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f)
     }
 }
 
 impl fmt::Display for PathAndQuery {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         if !self.data.is_empty() {
             match self.data.as_bytes()[0] {
                 b'/' | b'*' => write!(fmt, "{}", &self.data[..]),
